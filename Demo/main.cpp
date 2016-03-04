@@ -7,350 +7,268 @@
  */
 
 #include <SDL2/SDL.h>
-#include <GL/gl.h>
+#include <GL/glew.h>
+#include <SDL2/SDL_opengl.h>
 #include <GL/glu.h>
+#include "engine/shaderprogram.h"
 
 #include <stdio.h>
 #include <stdlib.h>
+//Screen dimension constants
+const int SCREEN_WIDTH = 640;
+const int SCREEN_HEIGHT = 480;
 
-static GLboolean should_rotate = GL_TRUE;
+ShaderProgram* shader;
 
-static void quit_tutorial( int code )
+//Starts up SDL, creates window, and initializes OpenGL
+bool init();
+
+//Initializes rendering program and clear color
+bool initGL();
+void initShaders();
+
+//Input handler
+void handleKeys( unsigned char key, int x, int y );
+
+//Per frame update
+void update();
+
+//Renders quad to the screen
+void render();
+
+//Frees media and shuts down SDL
+void close();
+
+//The window we'll be rendering to
+SDL_Window* gWindow = NULL;
+
+//OpenGL context
+SDL_GLContext gContext;
+
+//Render flag
+bool gRenderQuad = true;
+
+//Graphics program
+GLuint gProgramID = 0;
+GLint gVertexPos2DLocation = -1;
+GLint timeLoc=-1;
+GLint scWidthLoc=-1;
+GLint scHeightLoc=-1;
+
+GLuint VertexArrayID;
+GLuint gVBO = 0;
+GLuint gIBO = 0;
+
+float time=0.f;
+
+bool init()
 {
-    /*
-     * Quit SDL so we can release the fullscreen
-     * mode and restore the previous video settings,
-     * etc.
-     */
-    SDL_Quit( );
+	//Initialization flag
+	bool success = true;
 
-    /* Exit program. */
-    exit( code );
+	//Initialize SDL
+	if( SDL_Init( SDL_INIT_VIDEO ) < 0 )
+	{
+		printf( "SDL could not initialize! SDL Error: %s\n", SDL_GetError() );
+		success = false;
+	}
+	else
+	{
+		//Use OpenGL 3.3 core
+		SDL_GL_SetAttribute( SDL_GL_CONTEXT_MAJOR_VERSION, 3 );
+		SDL_GL_SetAttribute( SDL_GL_CONTEXT_MINOR_VERSION, 3 );
+		SDL_GL_SetAttribute( SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE );
+
+		//Create window
+		gWindow = SDL_CreateWindow( "SDL Tutorial", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN);
+		if( gWindow == NULL )
+		{
+			printf( "Window could not be created! SDL Error: %s\n", SDL_GetError() );
+			success = false;
+		}
+		else
+		{
+			//Create context
+			gContext = SDL_GL_CreateContext( gWindow );
+			if( gContext == NULL )
+			{
+				printf( "OpenGL context could not be created! SDL Error: %s\n", SDL_GetError() );
+				success = false;
+			}
+			else
+			{
+				//Initialize GLEW
+				glewExperimental = GL_TRUE; 
+				GLenum glewError = glewInit();
+				if( glewError != GLEW_OK )
+				{
+					printf( "Error initializing GLEW! %s\n", glewGetErrorString( glewError ) );
+				}
+
+				//Use Vsync
+				if( SDL_GL_SetSwapInterval( 1 ) < 0 )
+				{
+					printf( "Warning: Unable to set VSync! SDL Error: %s\n", SDL_GetError() );
+				}
+
+			}
+		}
+	}
+
+	return success;
 }
 
-static bool process_events( void )
+void initShaders(char* frag)
 {
-    /* Our SDL event placeholder. */
-    SDL_Event e;
+    if(frag==NULL)
+        shader = new ShaderProgram("shaders/basic_vertex.vshader",NULL,"shaders/basic_fragment.fshader");
+    else
+        shader = new ShaderProgram("shaders/basic_vertex.vshader",NULL,frag);
+    
+    gVertexPos2DLocation = shader->getAttribLocation("LVertexPos2D");
+    timeLoc = shader->getUniformLocation("time");
+    scWidthLoc = shader->getUniformLocation("screenWidth");
+    scHeightLoc = shader->getUniformLocation("screenHeight");
+    
+    glViewport(0.f, 0.f, SCREEN_WIDTH, SCREEN_HEIGHT);
+    
+    //Initialize clear color
+	glClearColor( 0.f, 0.f, 0.f, 1.f );
+    
+    glGenVertexArrays(1, &VertexArrayID);
+    glBindVertexArray(VertexArrayID);
+    
+	//VBO data
+	GLfloat vertexData[] =
+	{
+		-0.5f, -1.f,
+		0.5f, -1.f,
+		-0.5f, 1.f,
+		-0.5f, 1.f,
+		0.5f, -1.f,
+		0.5f, 1.f, 
+	};
 
-    /* Grab all the events off the queue. */
-    while( SDL_PollEvent( &e ) ) {
-        if(e.type == SDL_QUIT)
-            return true;
-    }
-    return false;
+	//Create VBO
+	glGenBuffers( 1, &gVBO );
+	glBindBuffer( GL_ARRAY_BUFFER, gVBO );
+	glBufferData( GL_ARRAY_BUFFER, 2 * 6 * sizeof(GLfloat), vertexData, GL_STATIC_DRAW );
+	glEnableVertexAttribArray(0);
+	glVertexAttribPointer(0,2,GL_FLOAT,GL_FALSE,0,NULL);
+	glBindVertexArray(0);
 }
 
-static void draw_screen( void )
+void handleKeys( unsigned char key, int x, int y )
 {
-    /* Our angle of rotation. */
-    static float angle = 0.0f;
-
-    /*
-     * EXERCISE:
-     * Replace this awful mess with vertex
-     * arrays and a call to glDrawElements.
-     *
-     * EXERCISE:
-     * After completing the above, change
-     * it to use compiled vertex arrays.
-     *
-     * EXERCISE:
-     * Verify my windings are correct here ;).
-     */
-    static GLfloat v0[] = { -1.0f, -1.0f,  1.0f };
-    static GLfloat v1[] = {  1.0f, -1.0f,  1.0f };
-    static GLfloat v2[] = {  1.0f,  1.0f,  1.0f };
-    static GLfloat v3[] = { -1.0f,  1.0f,  1.0f };
-    static GLfloat v4[] = { -1.0f, -1.0f, -1.0f };
-    static GLfloat v5[] = {  1.0f, -1.0f, -1.0f };
-    static GLfloat v6[] = {  1.0f,  1.0f, -1.0f };
-    static GLfloat v7[] = { -1.0f,  1.0f, -1.0f };
-    static GLubyte red[]    = { 255,   0,   0, 255 };
-    static GLubyte green[]  = {   0, 255,   0, 255 };
-    static GLubyte blue[]   = {   0,   0, 255, 255 };
-    static GLubyte white[]  = { 255, 255, 255, 255 };
-    static GLubyte yellow[] = {   0, 255, 255, 255 };
-    static GLubyte black[]  = {   0,   0,   0, 255 };
-    static GLubyte orange[] = { 255, 255,   0, 255 };
-    static GLubyte purple[] = { 255,   0, 255,   0 };
-
-    /* Clear the color and depth buffers. */
-    glClear( GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT );
-
-    /* We don't want to modify the projection matrix. */
-    glMatrixMode( GL_MODELVIEW );
-    glLoadIdentity( );
-
-    /* Move down the z-axis. */
-    glTranslatef( 0.0, 0.0, -5.0 );
-
-    /* Rotate. */
-    glRotatef( angle, 0.0, 1.0, 0.0 );
-
-    if( should_rotate ) {
-
-        if( ++angle > 360.0f ) {
-            angle = 0.0f;
-        }
-
-    }
-
-    /* Send our triangle data to the pipeline. */
-    glBegin( GL_TRIANGLES );
-
-    glColor4ubv( red );
-    glVertex3fv( v0 );
-    glColor4ubv( green );
-    glVertex3fv( v1 );
-    glColor4ubv( blue );
-    glVertex3fv( v2 );
-
-    glColor4ubv( red );
-    glVertex3fv( v0 );
-    glColor4ubv( blue );
-    glVertex3fv( v2 );
-    glColor4ubv( white );
-    glVertex3fv( v3 );
-
-    glColor4ubv( green );
-    glVertex3fv( v1 );
-    glColor4ubv( black );
-    glVertex3fv( v5 );
-    glColor4ubv( orange );
-    glVertex3fv( v6 );
-
-    glColor4ubv( green );
-    glVertex3fv( v1 );
-    glColor4ubv( orange );
-    glVertex3fv( v6 );
-    glColor4ubv( blue );
-    glVertex3fv( v2 );
-
-    glColor4ubv( black );
-    glVertex3fv( v5 );
-    glColor4ubv( yellow );
-    glVertex3fv( v4 );
-    glColor4ubv( purple );
-    glVertex3fv( v7 );
-
-    glColor4ubv( black );
-    glVertex3fv( v5 );
-    glColor4ubv( purple );
-    glVertex3fv( v7 );
-    glColor4ubv( orange );
-    glVertex3fv( v6 );
-
-    glColor4ubv( yellow );
-    glVertex3fv( v4 );
-    glColor4ubv( red );
-    glVertex3fv( v0 );
-    glColor4ubv( white );
-    glVertex3fv( v3 );
-
-    glColor4ubv( yellow );
-    glVertex3fv( v4 );
-    glColor4ubv( white );
-    glVertex3fv( v3 );
-    glColor4ubv( purple );
-    glVertex3fv( v7 );
-
-    glColor4ubv( white );
-    glVertex3fv( v3 );
-    glColor4ubv( blue );
-    glVertex3fv( v2 );
-    glColor4ubv( orange );
-    glVertex3fv( v6 );
-
-    glColor4ubv( white );
-    glVertex3fv( v3 );
-    glColor4ubv( orange );
-    glVertex3fv( v6 );
-    glColor4ubv( purple );
-    glVertex3fv( v7 );
-
-    glColor4ubv( green );
-    glVertex3fv( v1 );
-    glColor4ubv( red );
-    glVertex3fv( v0 );
-    glColor4ubv( yellow );
-    glVertex3fv( v4 );
-
-    glColor4ubv( green );
-    glVertex3fv( v1 );
-    glColor4ubv( yellow );
-    glVertex3fv( v4 );
-    glColor4ubv( black );
-    glVertex3fv( v5 );
-
-    glEnd( );
-
-    /*
-     * EXERCISE:
-     * Draw text telling the user that 'Spc'
-     * pauses the rotation and 'Esc' quits.
-     * Do it using vetors and textured quads.
-     */
-
-    /*
-     * Swap the buffers. This this tells the driver to
-     * render the next frame from the contents of the
-     * back-buffer, and to set all rendering operations
-     * to occur on what was the front-buffer.
-     *
-     * Double buffering prevents nasty visual tearing
-     * from the application drawing on areas of the
-     * screen that are being updated at the same time.
-     */
-    SDL_GL_SwapBuffers( );
+	//Toggle quad
+	if( key == 'q' )
+	{
+		gRenderQuad = !gRenderQuad;
+	}
 }
 
-static void setup_opengl( int width, int height )
+void update()
 {
-    float ratio = (float) width / (float) height;
-
-    /* Our shading model--Gouraud (smooth). */
-    glShadeModel( GL_SMOOTH );
-
-    /* Culling. */
-    glCullFace( GL_BACK );
-    glFrontFace( GL_CCW );
-    glEnable( GL_CULL_FACE );
-
-    /* Set the clear color. */
-    glClearColor( 0, 0, 0, 0 );
-
-    /* Setup our viewport. */
-    glViewport( 0, 0, width, height );
-
-    /*
-     * Change to the projection matrix and set
-     * our viewing volume.
-     */
-    glMatrixMode( GL_PROJECTION );
-    glLoadIdentity( );
-    /*
-     * EXERCISE:
-     * Replace this with a call to glFrustum.
-     */
-    gluPerspective( 60.0, ratio, 1.0, 1024.0 );
+    time = SDL_GetTicks()/1000.f;
 }
 
-int main( int argc, char* argv[] )
+void render()
 {
-    /* Information about the current video settings. */
-    const SDL_VideoInfo* info = NULL;
-    /* Dimensions of our window. */
-    int width = 0;
-    int height = 0;
-    /* Color depth in bits of our window. */
-    int bpp = 0;
-    /* Flags we will pass into SDL_SetVideoMode. */
-    int flags = 0;
+	//Clear color buffer
+	glClear( GL_COLOR_BUFFER_BIT );
+	
+	//Render quad
+	if( gRenderQuad )
+	{
+		//Bind program
+		//glUseProgram( gProgramID );
+        shader->use();
 
-    /* First, initialize SDL's video subsystem. */
-    if( SDL_Init( SDL_INIT_VIDEO ) < 0 ) {
-        /* Failed, exit. */
-        fprintf( stderr, "Video initialization failed: %s\n",
-             SDL_GetError( ) );
-        quit_tutorial( 1 );
-    }
+		//Set vertex data
+		glUniform1f(timeLoc, time); 
+		glUniform1f(scWidthLoc, SCREEN_WIDTH);
+		glUniform1f(scHeightLoc, SCREEN_HEIGHT);
+		glBindVertexArray(VertexArrayID);
+		glDrawArrays( GL_TRIANGLES, 0, 6);
 
-    /* Let's get some video information. */
-    info = SDL_GetVideoInfo( );
+		glBindVertexArray(0);
 
-    if( !info ) {
-        /* This should probably never happen. */
-        fprintf( stderr, "Video query failed: %s\n",
-             SDL_GetError( ) );
-        quit_tutorial( 1 );
-    }
+		//Unbind program
+		glUseProgram( NULL );
+	}
+}
 
-    /*
-     * Set our width/height to 640/480 (you would
-     * of course let the user decide this in a normal
-     * app). We get the bpp we will request from
-     * the display. On X11, VidMode can't change
-     * resolution, so this is probably being overly
-     * safe. Under Win32, ChangeDisplaySettings
-     * can change the bpp.
-     */
-    width = 640;
-    height = 480;
-    bpp = info->vfmt->BitsPerPixel;
+void close()
+{
+	//Deallocate program
+	delete shader;
+	glDeleteVertexArrays(1, &VertexArrayID);
+	//glDeleteProgram( gProgramID );
 
-    /*
-     * Now, we want to setup our requested
-     * window attributes for our OpenGL window.
-     * We want *at least* 5 bits of red, green
-     * and blue. We also want at least a 16-bit
-     * depth buffer.
-     *
-     * The last thing we do is request a double
-     * buffered window. '1' turns on double
-     * buffering, '0' turns it off.
-     *
-     * Note that we do not use SDL_DOUBLEBUF in
-     * the flags to SDL_SetVideoMode. That does
-     * not affect the GL attribute state, only
-     * the standard 2D blitting setup.
-     */
-    SDL_GL_SetAttribute( SDL_GL_RED_SIZE, 5 );
-    SDL_GL_SetAttribute( SDL_GL_GREEN_SIZE, 5 );
-    SDL_GL_SetAttribute( SDL_GL_BLUE_SIZE, 5 );
-    SDL_GL_SetAttribute( SDL_GL_DEPTH_SIZE, 16 );
-    SDL_GL_SetAttribute( SDL_GL_DOUBLEBUFFER, 1 );
+	//Destroy window	
+	SDL_DestroyWindow( gWindow );
+	gWindow = NULL;
 
-    /*
-     * We want to request that SDL provide us
-     * with an OpenGL window, in a fullscreen
-     * video mode.
-     *
-     * EXERCISE:
-     * Make starting windowed an option, and
-     * handle the resize events properly with
-     * glViewport.
-     */
-    flags = SDL_OPENGL | SDL_FULLSCREEN;
+	//Quit SDL subsystems
+	SDL_Quit();
+}
 
-    /*
-     * Set the video mode
-     */
-    if( SDL_SetVideoMode( width, height, bpp, flags ) == 0 ) {
-        /* 
-         * This could happen for a variety of reasons,
-         * including DISPLAY not being set, the specified
-         * resolution not being available, etc.
-         */
-        fprintf( stderr, "Video mode set failed: %s\n",
-             SDL_GetError( ) );
-        quit_tutorial( 1 );
-    }
 
-    /*
-     * At this point, we should have a properly setup
-     * double-buffered window for use with OpenGL.
-     */
-    setup_opengl( width, height );
+int main( int argc, char* args[] )
+{
+	//Start up SDL and create window
+	if( !init() )
+	{
+		printf( "Failed to initialize!\n" );
+	}
+	else
+	{
+		//Main loop flag
+		bool quit = false;
+		if(argc==2)
+		    initShaders(args[1]);
+		else
+		    initShaders(NULL);
 
-    /*
-     * Now we want to begin our normal app process--
-     * an event loop with a lot of redrawing.
-     */
-    while( 1 ) {
-        /* Process incoming events. */
-        if(process_events( )) break;
-        /* Draw the screen. */
-        draw_screen( );
-    }
+		//Event handler
+		SDL_Event e;
+		
+		//Enable text input
+		SDL_StartTextInput();
 
-    /*
-     * EXERCISE:
-     * Record timings using SDL_GetTicks() and
-     * and print out frames per second at program
-     * end.
-     */
+		//While application is running
+		while( !quit )
+		{
+			//Handle events on queue
+			while( SDL_PollEvent( &e ) != 0 )
+			{
+				//User requests quit
+				if( e.type == SDL_QUIT )
+				{
+					quit = true;
+				}
+				//Handle keypress with current mouse position
+				else if( e.type == SDL_TEXTINPUT )
+				{
+					int x = 0, y = 0;
+					SDL_GetMouseState( &x, &y );
+					handleKeys( e.text.text[ 0 ], x, y );
+				}
+			}
+            update();
 
-    /* Never reached. */
-    return 0;
+			render();
+			
+			//Update screen
+			SDL_GL_SwapWindow( gWindow );
+		}
+		
+		//Disable text input
+		SDL_StopTextInput();
+	}
+
+	//Free resources and close SDL
+	close();
+
+	return 0;
 }

@@ -1,5 +1,5 @@
 #OBJS specifies which files to compile as part of the project
-OBJS = main.cpp
+OBJS = shader.o main.cpp 
 
 #CC specifies which compiler we're using
 CC = g++
@@ -9,7 +9,7 @@ CC = g++
 COMPILER_FLAGS = -w
 
 #LINKER_FLAGS specifies the libraries we're linking against
-LINKER_FLAGS = -lSDL2
+LINKER_FLAGS = -lGLEW -lGL -lSDL2
 
 #OBJ_NAME specifies the name of our exectuable
 OBJ_NAME = demo
@@ -17,3 +17,7 @@ OBJ_NAME = demo
 #This is the target that compiles our executable
 all : $(OBJS)
 	$(CC) $(OBJS) $(COMPILER_FLAGS) $(LINKER_FLAGS) -o $(OBJ_NAME)
+	rm shader.o
+	
+shader.o :
+	$(CC) -c engine/shaderprogram.cpp -w -lGLEW -lGL -o shader.o
